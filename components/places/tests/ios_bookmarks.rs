@@ -456,11 +456,17 @@ fn test_import_with_local() -> Result<()> {
 
     let bmk2 =
         bookmarks::public_node::fetch_bookmark(&places_db, &sync_guid(&b2id), false)?.unwrap();
-    assert_eq!(bmk2.url, Some(url::Url::parse("http://💖.com/💖").unwrap()));
+    assert_eq!(
+        bmk2.url,
+        Some(url::Url::parse("http://💖.com/💖").unwrap())
+    );
 
     let bmk3 =
         bookmarks::public_node::fetch_bookmark(&places_db, &sync_guid(&b3id), false)?.unwrap();
-    assert_eq!(bmk3.url, Some(url::Url::parse("http://😍.com/😍").unwrap()));
+    assert_eq!(
+        bmk3.url,
+        Some(url::Url::parse("http://😍.com/😍").unwrap())
+    );
 
     let mobile = bookmarks::public_node::fetch_bookmark(
         &places_db,

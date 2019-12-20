@@ -368,7 +368,7 @@ jobs:
             xcrun instruments -w "iPhone 8 (13.0) [" || true
       - run:
           name: Run XCode tests
-          command: bash run-ios-tests.sh
+          command: bash automation/run_ios_tests.sh
       - store_artifacts:
           path: raw_xcodetest.log
           destination: logs/raw_xcodetest.log
