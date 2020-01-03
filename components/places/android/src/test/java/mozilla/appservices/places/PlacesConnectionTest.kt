@@ -3,11 +3,14 @@
 
 package mozilla.appservices.places
 
+import androidx.test.core.app.ApplicationProvider
 import mozilla.appservices.Megazord
+import mozilla.components.service.glean.testing.GleanTestRule
 import org.junit.After
 import org.junit.rules.TemporaryFolder
 import org.junit.Rule
 import org.junit.runner.RunWith
+// import org.mozilla.appservices.places.GleanMetrics.PlacesApi as PlacesManagerMetrics
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.junit.Test
@@ -20,6 +23,9 @@ class PlacesConnectionTest {
     @Rule
     @JvmField
     val dbFolder = TemporaryFolder()
+
+    @get:Rule
+    val gleanRule = GleanTestRule(ApplicationProvider.getApplicationContext())
 
     lateinit var api: PlacesApi
     lateinit var db: PlacesWriterConnection
@@ -262,4 +268,30 @@ class PlacesConnectionTest {
         assertEquals(folder.position, 2)
         assertEquals(folder.parentGUID, BookmarkRoot.Unfiled.id)
     }
+
+    // @Test
+    // fun testMetricsGathering() {
+    //     val itemGUID = db.createBookmarkItem(
+    //             parentGUID = BookmarkRoot.Unfiled.id,
+    //             url = "https://www.example.com/",
+    //             title = "example")
+
+    //     val sepGUID = db.createSeparator(
+    //             parentGUID = BookmarkRoot.Unfiled.id,
+    //             position = 0)
+
+    //     val folderGUID = db.createFolder(
+    //             parentGUID = BookmarkRoot.Unfiled.id,
+    //             title = "example folder")
+
+    //     assert(!PlacesManagerMetrics.readQueryTime.testHasValue())
+    //     assert(!PlacesManagerMetrics.readQueryCount.testHasValue())
+    //     assert(!PlacesManagerMetrics.readQueryErrorCount["no_such_recod"].testHasValue())
+
+    //     getBookmark(itemGUID);
+
+    //     assert(PlacesManagerMetrics.readQueryTime.testHasValue())
+    //     assertEquals(PlacesManagerMetrics.readQueryCount.testGetValue(), 1)
+    //     assert(!PlacesManagerMetrics.readQueryErrorCount["no_such_recod"].testHasValue())
+    // }
 }

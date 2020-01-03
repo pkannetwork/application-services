@@ -17,6 +17,18 @@ import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.lang.ref.WeakReference
+import org.mozilla.appservices.places.GleanMetrics.PlacesStore as PlacesManagerMetrics
+
+/**
+ * Import some private Glean types, so that we can use them in type declarations.
+ *
+ * By agreement with the Glean team, we must not
+ * instantiate anything from these classes, and it's on us to fix any bustage
+ * on version updates.
+ */
+import mozilla.components.service.glean.private.CounterMetricType
+import mozilla.components.service.glean.private.TimingDistributionMetricType
+import mozilla.components.service.glean.private.LabeledMetricType
 
 /**
  * An implementation of a [PlacesManager] backed by a Rust Places library.
@@ -346,24 +358,30 @@ open class PlacesReaderConnection internal constructor(connHandle: Long) :
     }
 
     override fun getBookmark(guid: String): BookmarkTreeNode? {
-        val rustBuf = rustCall { err ->
-            LibPlacesFFI.INSTANCE.bookmarks_get_by_guid(this.handle.get(), guid, 0.toByte(), err)
-        }
-        try {
-            return rustBuf.asCodedInputStream()?.let { stream ->
-                unpackProtobuf(MsgTypes.BookmarkNode.parseFrom(stream))
+        readQueryCounters.measure {
+            val rustBuf = rustCall { err ->
+                PlacesManagerMetrics.readQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_get_by_guid(this.handle.get(), guid, 0.toByte(), err)
+                }
             }
-        } finally {
-            LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            try {
+                return rustBuf.asCodedInputStream()?.let { stream ->
+                    unpackProtobuf(MsgTypes.BookmarkNode.parseFrom(stream))
+                }
+            } finally {
+                LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            }
         }
     }
 
     override fun getBookmarksTree(rootGUID: String, recursive: Boolean): BookmarkTreeNode? {
         val rustBuf = rustCall { err ->
-            if (recursive) {
-                LibPlacesFFI.INSTANCE.bookmarks_get_tree(this.handle.get(), rootGUID, err)
-            } else {
-                LibPlacesFFI.INSTANCE.bookmarks_get_by_guid(this.handle.get(), rootGUID, 1.toByte(), err)
+            PlacesManagerMetrics.scanQueryTime.measure {
+                if (recursive) {
+                    LibPlacesFFI.INSTANCE.bookmarks_get_tree(this.handle.get(), rootGUID, err)
+                } else {
+                    LibPlacesFFI.INSTANCE.bookmarks_get_by_guid(this.handle.get(), rootGUID, 1.toByte(), err)
+                }
             }
         }
         try {
@@ -376,15 +394,19 @@ open class PlacesReaderConnection internal constructor(connHandle: Long) :
     }
 
     override fun getBookmarksWithURL(url: String): List<BookmarkItem> {
-        val rustBuf = rustCall { err ->
-            LibPlacesFFI.INSTANCE.bookmarks_get_all_with_url(this.handle.get(), url, err)
-        }
+        readQueryCounters.measure {
+            val rustBuf = rustCall { err ->
+                PlacesManagerMetrics.readQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_get_all_with_url(this.handle.get(), url, err)
+                }
+            }
 
-        try {
-            val message = MsgTypes.BookmarkNodeList.parseFrom(rustBuf.asCodedInputStream()!!)
-            return unpackProtobufItemList(message)
-        } finally {
-            LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            try {
+                val message = MsgTypes.BookmarkNodeList.parseFrom(rustBuf.asCodedInputStream()!!)
+                return unpackProtobufItemList(message)
+            } finally {
+                LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            }
         }
     }
 
@@ -395,29 +417,44 @@ open class PlacesReaderConnection internal constructor(connHandle: Long) :
     }
 
     override fun searchBookmarks(query: String, limit: Int): List<BookmarkItem> {
-        val rustBuf = rustCall { err ->
-            LibPlacesFFI.INSTANCE.bookmarks_search(this.handle.get(), query, limit, err)
-        }
+        readQueryCounters.measure {
+            val rustBuf = rustCall { err ->
+                PlacesManagerMetrics.readQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_search(this.handle.get(), query, limit, err)
+                }
+            }
 
-        try {
-            val message = MsgTypes.BookmarkNodeList.parseFrom(rustBuf.asCodedInputStream()!!)
-            return unpackProtobufItemList(message)
-        } finally {
-            LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            try {
+                val message = MsgTypes.BookmarkNodeList.parseFrom(rustBuf.asCodedInputStream()!!)
+                return unpackProtobufItemList(message)
+            } finally {
+                LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            }
         }
     }
 
     override fun getRecentBookmarks(limit: Int): List<BookmarkItem> {
-        val rustBuf = rustCall { err ->
-            LibPlacesFFI.INSTANCE.bookmarks_get_recent(this.handle.get(), limit, err)
-        }
+        readQueryCounters.measure {
+            val rustBuf = rustCall { err ->
+                PlacesManagerMetrics.readQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_get_recent(this.handle.get(), limit, err)
+                }
+            }
 
-        try {
-            val message = MsgTypes.BookmarkNodeList.parseFrom(rustBuf.asCodedInputStream()!!)
-            return unpackProtobufItemList(message)
-        } finally {
-            LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            try {
+                val message = MsgTypes.BookmarkNodeList.parseFrom(rustBuf.asCodedInputStream()!!)
+                return unpackProtobufItemList(message)
+            } finally {
+                LibPlacesFFI.INSTANCE.places_destroy_bytebuffer(rustBuf)
+            }
         }
+    }
+
+    private val readQueryCounters: PlacesManagerCounterMetrics by lazy {
+        PlacesManagerCounterMetrics(
+            PlacesManagerMetrics.readQueryCount,
+            PlacesManagerMetrics.readQueryErrorCount
+        )
     }
 }
 
@@ -451,7 +488,7 @@ class PlacesWriterConnection internal constructor(connHandle: Long, api: PlacesA
     override fun deletePlace(url: String) {
         rustCall { error ->
             LibPlacesFFI.INSTANCE.places_delete_place(
-                    this.handle.get(), url, error)
+                this.handle.get(), url, error)
         }
     }
 
@@ -498,16 +535,24 @@ class PlacesWriterConnection internal constructor(connHandle: Long, api: PlacesA
     }
 
     override fun deleteAllBookmarks() {
-        rustCall { error ->
-            LibPlacesFFI.INSTANCE.bookmarks_delete_everything(this.handle.get(), error)
+        return writeQueryCounters.measure {
+            rustCall { error ->
+                PlacesManagerMetrics.writeQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_delete_everything(this.handle.get(), error)
+                }
+            }
         }
     }
 
     override fun deleteBookmarkNode(guid: String): Boolean {
-        val existedByte = rustCall { error ->
-            LibPlacesFFI.INSTANCE.bookmarks_delete(this.handle.get(), guid, error)
+        return writeQueryCounters.measure {
+            rustCall { error ->
+                val existedByte = PlacesManagerMetrics.writeQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_delete(this.handle.get(), guid, error)
+                }
+                existedByte.toInt() != 0
+            }
         }
-        return existedByte.toInt() != 0
     }
 
     // Does the shared insert work, takes the position just because
@@ -516,9 +561,13 @@ class PlacesWriterConnection internal constructor(connHandle: Long, api: PlacesA
         position?.let { builder.setPosition(position) }
         val buf = builder.build()
         val (nioBuf, len) = buf.toNioDirectBuffer()
-        return rustCallForString { err ->
-            val ptr = Native.getDirectBufferPointer(nioBuf)
-            LibPlacesFFI.INSTANCE.bookmarks_insert(this.handle.get(), ptr, len, err)
+        writeQueryCounters.measure {
+            return rustCallForString { err ->
+                val ptr = Native.getDirectBufferPointer(nioBuf)
+                PlacesManagerMetrics.writeQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_insert(this.handle.get(), ptr, len, err)
+                }
+            }
         }
     }
 
@@ -549,9 +598,13 @@ class PlacesWriterConnection internal constructor(connHandle: Long, api: PlacesA
     override fun updateBookmark(guid: String, info: BookmarkUpdateInfo) {
         val buf = info.toProtobuf(guid)
         val (nioBuf, len) = buf.toNioDirectBuffer()
-        rustCall { err ->
-            val ptr = Native.getDirectBufferPointer(nioBuf)
-            LibPlacesFFI.INSTANCE.bookmarks_update(this.handle.get(), ptr, len, err)
+        return writeQueryCounters.measure {
+            rustCall { err ->
+                val ptr = Native.getDirectBufferPointer(nioBuf)
+                PlacesManagerMetrics.writeQueryTime.measure {
+                    LibPlacesFFI.INSTANCE.bookmarks_update(this.handle.get(), ptr, len, err)
+                }
+            }
         }
     }
 
@@ -577,6 +630,13 @@ class PlacesWriterConnection internal constructor(connHandle: Long, api: PlacesA
         val handle = this.handle.getAndSet(0L)
         interruptHandle.close()
         return handle
+    }
+
+    private val writeQueryCounters: PlacesManagerCounterMetrics by lazy {
+        PlacesManagerCounterMetrics(
+            PlacesManagerMetrics.writeQueryCount,
+            PlacesManagerMetrics.writeQueryErrorCount
+        )
     }
 }
 
@@ -1076,6 +1136,84 @@ data class VisitInfosWithBound(
                 bound = msg.bound,
                 offset = msg.offset
             )
+        }
+    }
+}
+
+/**
+ * A helper extension method for conveniently measuring execution time of a closure.
+ *
+ * N.B. since we're measuring calls to Rust code here, the provided callback may be doing
+ * unsafe things. It's very imporant that we always call the function exactly once here
+ * and don't try to do anything tricky like stashing it for later or calling it multiple times.
+ */
+inline fun <U> TimingDistributionMetricType.measure(funcToMeasure: () -> U): U {
+    val timerId = this.start()
+    try {
+        return funcToMeasure()
+    } finally {
+        this.stopAndAccumulate(timerId)
+    }
+}
+
+/**
+ * A helper class for gathering basic count metrics on different kinds of PlacesManager operations.
+ *
+ * For each type of operation, we want to measure:
+ *    - total count of operations performed
+ *    - count of operations that produced an error, labeled by type
+ *
+ * This is a convenince wrapper to measure the two in one shot.
+ */
+class PlacesManagerCounterMetrics(
+    val count: CounterMetricType,
+    val errCount: LabeledMetricType<CounterMetricType>
+) {
+    @Suppress("ComplexMethod", "TooGenericExceptionCaught")
+    inline fun <U> measure(callback: () -> U): U {
+        count.add()
+        try {
+            return callback()
+        } catch (e: Exception) {
+            when (e) {
+                is UrlParseFailed -> {
+                    errCount["url_parse_failed"].add()
+                }
+                is PlacesConnectionBusy -> {
+                    errCount["places_connection_busy"].add()
+                }
+                is OperationInterrupted -> {
+                    errCount["operation_interrupted"].add()
+                }
+                is BookmarksCorruption -> {
+                    errCount["bookmarks_corruption"].add()
+                }
+                is InvalidParent -> {
+                    errCount["invalid_parent"].add()
+                }
+                is UnknownBookmarkItem -> {
+                    errCount["unknown_bookmark_item"].add()
+                }
+                is UrlTooLong -> {
+                    errCount["url_too_long"].add()
+                }
+                is InvalidBookmarkUpdate -> {
+                    errCount["invalid_bookmark_update"].add()
+                }
+                is CannotUpdateRoot -> {
+                    errCount["cannot_update_root"].add()
+                }
+                is InternalPanic -> {
+                    errCount["internal_panic"].add()
+                }
+                is PlacesException -> {
+                    errCount["places_exception"].add()
+                }
+                else -> {
+                    errCount["__other__"].add()
+                }
+            }
+            throw e
         }
     }
 }
