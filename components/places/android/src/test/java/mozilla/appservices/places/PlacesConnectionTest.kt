@@ -15,6 +15,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.junit.Test
 import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
 import org.junit.Before
 
 @RunWith(RobolectricTestRunner::class)
@@ -271,19 +272,67 @@ class PlacesConnectionTest {
 
     @Test
     fun testMetricsGathering() {
+        assert(!PlacesManagerMetrics.writeQueryTime.testHasValue())
+        assert(!PlacesManagerMetrics.writeQueryCount.testHasValue())
+        assert(!PlacesManagerMetrics.writeQueryErrorCount["unknown_bookmark_item"].testHasValue())
+
         val itemGUID = db.createBookmarkItem(
                 parentGUID = BookmarkRoot.Unfiled.id,
                 url = "https://www.example.com/",
                 title = "example")
 
+        assert(PlacesManagerMetrics.writeQueryTime.testHasValue())
+        assertEquals(1, PlacesManagerMetrics.writeQueryCount.testGetValue())
+        assert(!PlacesManagerMetrics.writeQueryErrorCount["unknown_bookmark_item"].testHasValue())
+
+        try {
+            db.createBookmarkItem(
+                parentGUID = BookmarkRoot.Unfiled.id,
+                url = "3",
+                title = "example")
+            fail("Should have thrown")
+        } catch (e: UrlParseFailed) {
+            // nothing to do here
+        }
+
+        assert(PlacesManagerMetrics.writeQueryTime.testHasValue())
+        assertEquals(2, PlacesManagerMetrics.writeQueryCount.testGetValue())
+        assert(PlacesManagerMetrics.writeQueryErrorCount["url_parse_failed"].testHasValue())
+        assertEquals(1, PlacesManagerMetrics.writeQueryErrorCount["url_parse_failed"].testGetValue())
+
         assert(!PlacesManagerMetrics.readQueryTime.testHasValue())
         assert(!PlacesManagerMetrics.readQueryCount.testHasValue())
-        assert(!PlacesManagerMetrics.readQueryErrorCount["no_such_recod"].testHasValue())
+        assert(!PlacesManagerMetrics.readQueryErrorCount["__other__"].testHasValue())
 
-        db.getBookmark(itemGUID);
+        db.getBookmark(itemGUID)
 
         assert(PlacesManagerMetrics.readQueryTime.testHasValue())
-        assertEquals(PlacesManagerMetrics.readQueryCount.testGetValue(), 1)
-        assert(!PlacesManagerMetrics.readQueryErrorCount["no_such_recod"].testHasValue())
+        assertEquals(1, PlacesManagerMetrics.readQueryCount.testGetValue())
+        assert(!PlacesManagerMetrics.readQueryErrorCount["__other__"].testHasValue())
+
+        assert(!PlacesManagerMetrics.scanQueryTime.testHasValue())
+
+        val folderGUID = db.createFolder(
+                parentGUID = BookmarkRoot.Unfiled.id,
+                title = "example folder")
+
+        db.createBookmarkItem(
+                parentGUID = folderGUID,
+                url = "https://www.example2.com/",
+                title = "example2")
+
+        db.createBookmarkItem(
+                parentGUID = folderGUID,
+                url = "https://www.example3.com/",
+                title = "example3")
+
+        db.createBookmarkItem(
+                parentGUID = BookmarkRoot.Unfiled.id,
+                url = "https://www.example4.com/",
+                title = "example4")
+
+        db.getBookmarksTree(folderGUID, false)
+
+        assert(PlacesManagerMetrics.scanQueryTime.testHasValue())
     }
 }
