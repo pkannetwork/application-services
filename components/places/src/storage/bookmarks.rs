@@ -5,7 +5,9 @@
 use super::RowId;
 use super::{delete_meta, put_meta};
 use super::{fetch_page_info, new_page_info};
-use crate::bookmark_sync;
+use crate::bookmark_sync::store::{
+    COLLECTION_SYNCID_META_KEY, GLOBAL_SYNCID_META_KEY, LAST_SYNC_META_KEY,
+};
 use crate::db::PlacesDb;
 use crate::error::*;
 use crate::types::{BookmarkType, SyncStatus, Timestamp};
@@ -1101,9 +1103,9 @@ fn delete_everything_in_tx(db: &PlacesDb) -> Result<()> {
         (SyncStatus::New as u8)
     ))?;
     bookmark_sync::create_synced_bookmark_roots(db)?;
-    put_meta(db, bookmark_sync::store::LAST_SYNC_META_KEY, &0)?;
-    delete_meta(db, bookmark_sync::store::GLOBAL_SYNCID_META_KEY)?;
-    delete_meta(db, bookmark_sync::store::COLLECTION_SYNCID_META_KEY)?;
+    put_meta(db, LAST_SYNC_META_KEY, &0)?;
+    delete_meta(db, GLOBAL_SYNCID_META_KEY)?;
+    delete_meta(db, COLLECTION_SYNCID_META_KEY)?;
     Ok(())
 }
 
@@ -1443,6 +1445,87 @@ fn get_raw_bookmarks_for_url(db: &PlacesDb, url: &Url) -> Result<Vec<RawBookmark
         &[(":url", &url.as_str())],
         RawBookmark::from_row,
     )?)
+}
+
+pub mod bookmark_sync {
+    use super::*;
+    use crate::bookmark_sync::SyncedBookmarkKind;
+
+    /// Removes all sync metadata, including synced bookmarks, pending tombstones,
+    /// change counters, sync statuses, the last sync time, and sync ID. This
+    /// should be called when the user signs out of Sync.
+    pub fn reset(db: &PlacesDb) -> Result<()> {
+        let tx = db.begin_transaction()?;
+        reset_meta(db)?;
+        delete_meta(db, GLOBAL_SYNCID_META_KEY)?;
+        delete_meta(db, COLLECTION_SYNCID_META_KEY)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes all synced bookmarks and pending tombstones, and forgets the
+    /// last sync time, without resetting the sync ID. This means the next
+    /// sync will be treated as a first sync with all new local data. This
+    /// function should be called from within an open transaction.
+    pub(crate) fn reset_meta(db: &PlacesDb) -> Result<()> {
+        db.execute_batch(&format!(
+            "DELETE FROM moz_bookmarks_synced;
+
+             DELETE FROM moz_bookmarks_deleted;
+
+             UPDATE moz_bookmarks
+             SET syncChangeCounter = 1,
+                 syncStatus = {}",
+            (SyncStatus::New as u8)
+        ))?;
+        create_synced_bookmark_roots(db)?;
+        put_meta(db, LAST_SYNC_META_KEY, &0)?;
+        Ok(())
+    }
+
+    /// Sets up the syncable roots. All items in `moz_bookmarks_synced` descend
+    /// from these roots.
+    pub fn create_synced_bookmark_roots(db: &PlacesDb) -> Result<()> {
+        // NOTE: This is called in a transaction.
+        fn maybe_insert(
+            db: &PlacesDb,
+            guid: &SyncGuid,
+            parent_guid: &SyncGuid,
+            pos: u32,
+        ) -> Result<()> {
+            db.execute_batch(&format!(
+                "INSERT OR IGNORE INTO moz_bookmarks_synced(guid, parentGuid, kind)
+                 VALUES('{guid}', '{parent_guid}', {kind});
+
+                 INSERT OR IGNORE INTO moz_bookmarks_synced_structure(
+                     guid, parentGuid, position)
+                 VALUES('{guid}', '{parent_guid}', {pos});",
+                guid = guid.as_str(),
+                parent_guid = parent_guid.as_str(),
+                kind = SyncedBookmarkKind::Folder as u8,
+                pos = pos
+            ))?;
+            Ok(())
+        }
+
+        // The Places root is its own parent, to ensure it's always in
+        // `moz_bookmarks_synced_structure`.
+        maybe_insert(
+            db,
+            &BookmarkRootGuid::Root.as_guid(),
+            &BookmarkRootGuid::Root.as_guid(),
+            0,
+        )?;
+        for (pos, user_root) in USER_CONTENT_ROOTS.iter().enumerate() {
+            maybe_insert(
+                db,
+                &user_root.as_guid(),
+                &BookmarkRootGuid::Root.as_guid(),
+                pos as u32,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
