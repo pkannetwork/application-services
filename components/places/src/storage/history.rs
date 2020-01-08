@@ -975,7 +975,19 @@ pub mod history_sync {
         Ok(())
     }
 
-    pub fn reset_storage(db: &PlacesDb) -> Result<()> {
+    /// Resets all sync metadata, including change counters, sync statuses,
+    /// the last sync time, and sync ID. This should be called when the user
+    /// signs out of Sync.
+    pub fn reset(db: &PlacesDb) -> Result<()> {
+        let tx = db.begin_transaction()?;
+        reset_meta(db)?;
+        delete_meta(db, GLOBAL_SYNCID_META_KEY)?;
+        delete_meta(db, COLLECTION_SYNCID_META_KEY)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(crate) fn reset_meta(db: &PlacesDb) -> Result<()> {
         db.conn().execute_cached(
             &format!(
                 "
@@ -986,6 +998,7 @@ pub mod history_sync {
             ),
             NO_PARAMS,
         )?;
+        put_meta(db, LAST_SYNC_META_KEY, &0)?;
         Ok(())
     }
 } // end of sync module.
@@ -1791,7 +1804,7 @@ mod tests {
             .page;
         assert_eq!(pi.sync_change_counter, 1);
         assert_eq!(pi.sync_status, SyncStatus::Normal);
-        reset_storage(&conn)?;
+        reset_meta(&conn)?;
         pi = fetch_page_info(&conn, &pi.url)?
             .expect("page should exist")
             .page;
